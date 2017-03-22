@@ -1,0 +1,542 @@
+---
+title: "DEGs_march172017"
+author: "mac"
+date: "March 17, 2017"
+output: html_document
+---
+
+Open packages needed
+```{r}
+# packages
+library(sva)
+library(marray)
+library(Biobase)
+library(GEOquery)
+library(limma)
+library(reshape)
+library(stringr)
+library(pracma)
+library(plyr)
+
+# use enrichment_plots_etc_FINAL.R to make figures
+# use for random forest analysis
+
+base_directory = getwd() 
+# SHOULD BE (for me): "~/Desktop/lab/curation_project/paper_oct25/paper_March10/MAC_BMCSB_DEGs"
+
+set.seed(2017) # publication year 
+```
+
+CREATE FUNCTIONS
+```{r}
+
+### FILTER ACCESSION DATA WHEN PROVIDED COUNTRY NAME
+# RETUNRS ACCESSION_COUNTRY
+filter_accession_file = function(country_name) {
+  # country name ie "Cambodia", "Vietnam", "Thailand"
+  # output = accession file with samples only from the specified country
+  # load accession_file which has data about samples
+  setwd(paste(base_directory,'/data',sep=""))
+  accession_data2 = read.table("mok_accession_data_removed_ifNoRNA_orIfGam_orIfNoPCH.csv", header = T, sep = ",",stringsAsFactors=FALSE)
+  accession_data = accession_data2[,4:48] # REMOVE DUPLICATE COLUMNS
+  rownames(accession_data) = accession_data[,1]
+  accession_data = accession_data[accession_data$Asexual_stage_hpi <= 10,] # EARLY RINGS ONLY
+  accession_country = accession_data[which(grepl(country_name,accession_data$Country)),] # SELECT ONE COUNTRY
+  rm(accession_data2,accession_data)
+  return(accession_country)
+}
+
+### FUNCTION TO CONVERT TEXT RESISTANCE STATUS TO R/S, using both kelch13 mut and PCH
+# RETURNS GSET_COUNTRY
+change_res = function(sample_names_country,gset) {
+  sml <- c()
+  for (i in 1:nrow(sample_names_country)) {
+    if (is.na(sample_names_country[i,3]) | is.na(sample_names_country[i,2])) {
+      sml[i] = 'X' }
+    else if (as.numeric(sample_names_country[i,3]) > 5) {
+      if (as.numeric(sample_names_country[i,2]) >=2) { sml[i] = 'R' }
+      else {sml[i] = 'X'} }
+    else if (as.numeric(sample_names_country[i,3]) < 5){
+      if (as.numeric(sample_names_country[i,2]) == 1) { sml[i] = 'S' }
+      else {sml[i] = 'X'} }
+    else { sml[i] = 'X' } }
+# eliminate samples marked as "X" (samples in gset that aren't R/S or aren't in cambodia)
+  sel <- which(sml != "X")
+  sml <- sml[sel]
+  gset_country <- gset[ ,sel]
+  return(gset_country)
+}
+
+### FUNCTION TO CONVERT TEXT RESISTANCE STATUS TO R/S, using both kelch13 mut and PCH
+# RETURNS SML
+change_res2 = function(sample_names_country,gset) {
+  sml <- c()
+  for (i in 1:nrow(sample_names_country)) {
+    if (is.na(sample_names_country[i,3]) | is.na(sample_names_country[i,2])) { sml[i] = 'X' }
+    else if (as.numeric(sample_names_country[i,3]) > 5) {
+      if (as.numeric(sample_names_country[i,2]) >=2) { sml[i] = 'R' }
+      else {sml[i] = 'X'} }
+    else if (as.numeric(sample_names_country[i,3]) < 5){
+      if (as.numeric(sample_names_country[i,2]) == 1) { sml[i] = 'S' }
+      else {sml[i] = 'X'} }
+    else { sml[i] = 'X' } }
+# eliminate samples marked as "X" (samples in gset that aren't R/S or aren't in cambodia)
+  sel <- which(sml != "X")
+  sml <- sml[sel]
+  sml <- paste("G", sml, sep="")    # set group names
+  return(sml)
+}
+
+```
+
+PROBE RELABELING 
+```{r}
+setwd(paste(base_directory,'/data',sep=""))
+platform = read.table("GPL18893.txt", sep = "\t", header = T, stringsAsFactors = F)
+#write.table(platform[,1:2], file = "GPL_mok.tsv", sep = "\t", col.names = F, row.names = F, quote=FALSE)
+
+# CORRECTLY ANNOTE PROBES: BLAST ALL PROBE SEQUENCES TO PlasmoDB-28_Pfalciparum3D7_AnnotatedTranscripts ACQUIRED AUG 17 2016
+setwd(paste(base_directory,'/data/blast_results_probes/transcript_blast',sep="")) # open blast results with evalue cutoff of 0.0001
+blast = read.table("blast_output_pf_e0001", sep = ",", header = T, stringsAsFactors = F)
+blast1 = subset(blast, percent_identity >95) # remove if not perfect match
+blast2 = subset(blast1, score > 100) # remove if low score
+blast3 = subset(blast2, mismatch < 1) # remove if mismatches
+blast4 = subset(blast3, gaps < 1) # remove if gaps
+blast5 = blast4[,1:2] # remove extra columns (keep query and alignmnet)
+
+# remove alternative splicing notation
+select = blast5[which(grepl("\\.",blast5$alignment)),2]
+blast5[which(grepl("\\.",blast5$alignment)),2] =substr(select,1,nchar(select)-2)
+
+rownames(blast5) = NULL
+blast6 = (unique(blast5))
+blast_final = aggregate(alignment ~ query, blast6, paste, collapse = " ")
+rownames(blast_final) = blast_final$query
+
+rm(blast,blast1,blast2,blast3,blast4,blast5,blast6,platform,select)
+
+# get platform
+setwd(paste(base_directory,'/data',sep="")) 
+platform = read.table("GPL18893.txt", sep = "\t", header = T, stringsAsFactors = F,
+                      na.strings = c("NA",""))
+platform = (subset(platform, !grepl("_Dd2",ID))) # remove genotyping probes
+platform = (subset(platform, !grepl("_HB3",ID)))
+platform = (subset(platform, !grepl("_3D7",ID)))
+platform = (subset(platform, !grepl("_7G8",ID)))
+platform = (subset(platform, !grepl("_D10",ID)))
+
+rownames(platform) = platform$ID
+platform_with_blast = merge(platform, blast_final, by = "row.names", all = T)
+#write.table(platform_with_blast, file = "GPL_with_blast_results.tsv", sep = "\t", col.names = T, row.names = F, quote=FALSE)
+
+rm(platform,platform_with_blast)
+
+# MAKE DICTIONARY OF MODEL GENES TO UPDATED GENE IDs
+setwd(paste(base_directory,'/data',sep="")) 
+filename = "genes_used_by_model_feb62017.csv"
+genes_in_model = read.csv(filename, sep = ",", header = F, stringsAsFactors = F)
+dictionary = read.csv("Pfalciparum3D7_GeneAliases.csv", sep = ",", header = F, stringsAsFactors = F)
+old_dictionary = as.data.frame(dictionary)
+colnames(genes_in_model) = 'new_genes'
+
+# # confirm that all PF3D7_*******.# genes have identical IDs for all iteration
+# # ie PF3D7_0108400.1 = PF3D7_0108400.2 in older ID generations, so we can collapse in future steps
+# subdic = dictionary[which(grepl("\\.",dictionary$V1)),]
+# for (i in 1:nrow(subdic)) {
+#   if (grepl("\\.",subdic[i,1])) {
+#     ans = strsplit(subdic[i,1],"\\.")
+#     subdic[i,1] = (ans[[1]][1])
+#   }
+# }
+# subdic = unique(subdic)
+# rownames(subdic) = subdic$V1 # NO DUPLICATES MEANS ALL GENES WTIH A ".#" ARE THE SAME (alt splicing)
+
+new_dictionary = as.data.frame(matrix(NA,nrow = nrow(genes_in_model), ncol = 2))
+colnames(new_dictionary) = c("ORF", "model_ORF")
+new_dictionary$model_ORF = genes_in_model$new_genes
+for (i in 1:nrow(new_dictionary)) { # find all synonyms for each gene in model
+  gene = new_dictionary$model_ORF[i]
+  model_gene1 = old_dictionary[which(grepl(gene,old_dictionary$V1)),]
+  model_gene2 = old_dictionary[which(grepl(gene,old_dictionary$V2)),]
+  model_gene3 = old_dictionary[which(grepl(gene,old_dictionary$V3)),]
+  model_gene4 = old_dictionary[which(grepl(gene,old_dictionary$V4)),]
+  model_gene5 = old_dictionary[which(grepl(gene,old_dictionary$V5)),]
+  model_gene6 = old_dictionary[which(grepl(gene,old_dictionary$V6)),]
+  model_gene7 = old_dictionary[which(grepl(gene,old_dictionary$V7)),]
+  model_gene8 = old_dictionary[which(grepl(gene,old_dictionary$V8)),]
+  model_gene = rbind(model_gene1,model_gene2,model_gene3,model_gene4,model_gene5,
+                     model_gene6,model_gene7,model_gene8)
+  model_gene = unique(model_gene[,1])
+  new_dictionary$ORF[i] = paste(model_gene,collapse = " ")
+}
+#write.table(new_dictionary,"convert_model_genes_to_plasmodb.tsv",sep = "\t")
+
+rm(model_gene,model_gene1,model_gene2,model_gene3,model_gene4,model_gene5,model_gene6,model_gene7,model_gene8,genes_in_model,old_dictionary,i,gene,filename)
+
+# If multiple genes are in one row, separate
+dictionary = matrix(,nrow=0,ncol=2)
+colnames(dictionary) = c("ORF","model_ORF")
+for (i in 1:nrow(new_dictionary)) {
+  ans = strsplit(new_dictionary[i,1]," ") # length(ans[[1]]) > 1 if model gene has multiple synonyms
+  for (j in 1:length(ans[[1]])) { # make each synonym a separate row
+    step1 = cbind(ans[[1]][j],new_dictionary[i,2])
+    if (grepl("\\.",step1[,1])) { # .# references alt splicing, remove
+      ans2 = strsplit(step1[,1],"\\.")
+      step2 = cbind(ans2[[1]][1],new_dictionary[i,2])
+      dictionary = rbind(dictionary, step2)
+    }
+    else {dictionary = rbind(dictionary, step1)}
+  }
+}
+dictionary = unique(dictionary) # duplicates formed from alt splicing notation
+
+rm(i,j,ans,ans2,new_dictionary,step1,step2)
+
+# Edit two string search errors
+#PF3D7_1325200 = PF13_0144 (not PF3D7_1325300 = PF13_0144a)
+dictionary[which(grepl("PF3D7_1325300",dictionary[,1])),] = c(NA,NA)
+#PF3D7_1136900 = PF11_0381 (not PF3D7_1137000 = PF11_0381a = PF11_0381a:snRNA)
+dictionary[which(grepl("PF3D7_1137000",dictionary[,1])),] = c(NA,NA)
+dictionary= na.omit(dictionary)
+```
+
+
+```{r}
+
+# OPEN EXPRESSION DATA (PREPROCESSED AND NORMALIZED)
+setwd(paste(base_directory,'/data',sep="")) 
+gset2 <- getGEO("GSE59097", GSEMatrix =TRUE,getGPL= F)
+gset <- gset2[[1]] # CONVERT TO EXPRESSION SET
+
+# ADD RESISTANCE DATA TO GSET SAMPLES
+sample_names = sampleNames(phenoData(gset))
+sample_names = as.data.frame(sample_names)
+rownames(sample_names) = sample_names$sample_names
+
+```
+
+CAMBODIA
+```{r}
+
+# load accession_file with data from Cambodian samples
+accession_cambodia = filter_accession_file("Cambodia")
+
+sample_names_cambodia = merge(sample_names,accession_cambodia[,c(22,36)], by = "row.names", all = T)
+rownames(sample_names_cambodia) = sample_names_cambodia$Row.names
+sample_names_cambodia = sample_names_cambodia[,2:4]
+
+# convert text resistance status to R/S CAMBODIA
+gset_country = change_res(sample_names_cambodia,gset)
+sml = change_res2(sample_names_cambodia,gset)
+
+# ANALYZE EXPRESSION DATA (already log2 transformed)
+fl <- as.factor(sml)
+gset_country$description <- fl
+design <- model.matrix(~ description + 0, gset_country) # make design matrix
+colnames(design) <- levels(fl)
+cont.matrix = makeContrasts(GR-GS, levels = design) # make contrasts matrix
+
+# linear model
+fit <- lmFit(gset_country, design = design)
+fit2 <- contrasts.fit(fit, cont.matrix)
+fit3 <- eBayes(fit2)
+tT <- topTable(fit3, adjust="none", sort.by="none", number=100000) # total = 11005
+
+# subset top table
+tT <- subset(tT, select=c("P.Value","logFC"))
+tT = cbind(tT,rownames(tT))
+colnames(tT)[3] = "Probe_ID"
+
+# Add blast annotations (merge by probe ID to blast results)
+tTable = merge(tT,blast_final, by = 'row.names', all = T)
+tTable$Row.names = NULL
+# there are probes excluded from tT and gset, likely control probes
+
+# Add model gene IDs (merge by latest PlasmoDB ID)
+test = merge(tTable,dictionary, by.x = "alignment", by.y = "ORF", all = T)
+test1 = test[!is.na(test$model_ORF),] # remove if not in model (e.g. not a metabolic gene)
+test2 = test1[!is.na(test1$P.Value),] # remove if no one-to-one matching
+test3 = test2[,c(2,3,6)]
+# not_in_test = dictionary[which(!(dictionary[,2] %in% test3$model_ORF)),]
+# not_in_test 
+# [1,] "PF3D7_0702800" "PF3D7_0702800"  Query blasts poorly to trna sequence
+# [2,] "PF3D7_0707100" "PF3D7_0707100"  Not included in array 
+# [3,] "PF3D7_1438200" "PF3D7_1438200"  Not included in array
+# [4,] "PF3D7_1026900" "PF10_0409"      Not included in array
+# [5,] "mal_mito_2"    "mal_mito_2"     Not in array due to incorrect probe labeling
+# [6,] "mal_mito_1"    "mal_mito_1"     Not in array due to incorrect probe labeling
+
+# sort by orf and then p. value
+sorted = test3[order(test3$model_ORF,test3$P.Value), ] 
+# remove duplicates (two methods- p value method used)
+final_table = sorted[!duplicated(sorted[,3]), ] # select smallest p value probe for each gene
+#final_table = aggregate(x = sorted[c("P.Value","logFC")], by = sorted[c("model_ORF")], FUN = "mean") # average all probes for each gene
+# mutliple testing correction
+final_table$P.Value = p.adjust(final_table$P.Value, method = "fdr")
+
+
+# swap . to _ in gene IDs to be consistent with model
+#Add to final_table the few genes that start with 'MAL' but have '.' instead of '_'
+m = which((grepl(c('MAL8P1.140'), final_table$model_ORF))|(grepl(c('MAL8P1.150'), final_table$model_ORF))|(grepl(c('MAL13P1.56'), final_table$model_ORF))|(grepl(c('MAL13P1.40'), final_table$model_ORF)))
+final_table = as.matrix(final_table)
+final_table[-m,3]= gsub("\\.", "_", final_table[-m,3])
+final_table = as.data.frame(final_table)
+# EXPORT EXPRESSION DATA
+#write.table(final_table, file = "./cambodia.csv", row.names = F, sep = ",",quote=FALSE)
+count(final_table$P.Value<0.05)
+cambodia = final_table
+
+rm(sorted,gset_country,final_table,sml,design,cont.matrix,accession_cambodia,fit,fit2,fit3,tT,fl,sample_names_cambodia,test,test1,test2,test3,tTable,m)
+
+```
+
+VIETNAM
+```{r}
+# load accession_file which has data about samples
+accession_vietnam = filter_accession_file("Vietnam")
+
+sample_names_vietnam = merge(sample_names,accession_vietnam[,c(22,36)], by = "row.names", all = T)
+rownames(sample_names_vietnam) = sample_names_vietnam$Row.names
+sample_names_vietnam = sample_names_vietnam[,2:4]
+
+# convert text resistance status to R/S VIETNAM
+gset_country = change_res(sample_names_vietnam,gset)
+sml = change_res2(sample_names_vietnam,gset)
+
+# ANALYZE EXPRESSION DATA (already log2 transformed)
+fl <- as.factor(sml)
+gset_country$description <- fl
+design <- model.matrix(~ description + 0, gset_country) # make design matrix
+colnames(design) <- levels(fl)
+cont.matrix = makeContrasts(GR-GS, levels = design) # make contrasts matrix
+
+# linear model
+fit <- lmFit(gset_country, design = design)
+fit2 <- contrasts.fit(fit, cont.matrix)
+fit3 <- eBayes(fit2)
+tT <- topTable(fit3, adjust="none", sort.by="none", number=100000) # total = 11005
+
+# subset top table
+tT <- subset(tT, select=c("P.Value","logFC"))
+tT = cbind(tT,rownames(tT))
+colnames(tT)[3] = "Probe_ID"
+
+# Add blast annotations (merge by probe ID to blast results)
+tTable = merge(tT,blast_final, by = 'row.names', all = T)
+tTable$Row.names = NULL
+# there are probes excluded from tT and gset, likely control probes
+
+# Add model gene IDs (merge by latest PlasmoDB ID)
+test = merge(tTable,dictionary, by.x = "alignment", by.y = "ORF", all = T)
+test1 = test[!is.na(test$model_ORF),] # remove if not in model (e.g. not a metabolic gene)
+test2 = test1[!is.na(test1$P.Value),] # remove if no one-to-one matching
+test3 = test2[,c(2,3,6)] # remove extra columns
+
+# sort by orf and then p. value
+sorted = test3[order(test3$model_ORF,test3$P.Value), ] 
+# remove duplicates (two methods- p value method used)
+final_table = sorted[!duplicated(sorted[,3]), ] # select smallest p value probe for each gene
+#final_table = aggregate(x = sorted[c("P.Value","logFC")], by = sorted[c("model_ORF")], FUN = "mean") # average all probes for each gene
+# mutliple testing correction
+final_table$P.Value = p.adjust(final_table$P.Value, method = "fdr")
+
+# swap . to _ in gene IDs to be consistent with model
+#Add to final_table the few genes that start with 'MAL' but have '.' instead of '_'
+m = which((grepl(c('MAL8P1.140'), final_table$model_ORF))|(grepl(c('MAL8P1.150'), final_table$model_ORF))|(grepl(c('MAL13P1.56'), final_table$model_ORF))|(grepl(c('MAL13P1.40'), final_table$model_ORF)))
+final_table = as.matrix(final_table)
+final_table[-m,3]= gsub("\\.", "_", final_table[-m,3])
+final_table = as.data.frame(final_table)
+
+# EXPORT EXPRESSION DATA
+#write.table(final_table, file = "./vietnam.csv", sep = ",", row.names = F,quote=FALSE)
+
+vietnam = final_table 
+rm(sorted,gset_country,final_table,sml,design,cont.matrix,accession_vietnam,fit,fit2,fit3,tT,fl,sample_names_vietnam,test,test1,test2,test3,tTable,m)
+
+```
+
+```{r}
+cambodia2 = cambodia[as.numeric(as.character(cambodia$P.Value))<=0.05,]
+vietnam2 = vietnam[as.numeric(as.character(vietnam$P.Value))<=0.05,]
+test = merge(cambodia2, vietnam2, by = 'row.names', all = T)
+test2 = test[!is.na(test$P.Value.y),]
+test3 = test2[!is.na(test2$P.Value.x),]
+```
+
+COUNT NUMBER OF SIG GENES WITHOUT MET FILTER
+```{r}
+# CAMBODIA
+# load accession_file with data from Cambodian samples
+accession_cambodia = filter_accession_file("Cambodia")
+
+sample_names_cambodia = merge(sample_names,accession_cambodia[,c(22,36)], by = "row.names", all = T)
+rownames(sample_names_cambodia) = sample_names_cambodia$Row.names
+sample_names_cambodia = sample_names_cambodia[,2:4]
+
+# convert text resistance status to R/S CAMBODIA
+gset_country = change_res(sample_names_cambodia,gset)
+sml = change_res2(sample_names_cambodia,gset)
+
+# ANALYZE EXPRESSION DATA (already log2 transformed)
+fl <- as.factor(sml)
+gset_country$description <- fl
+design <- model.matrix(~ description + 0, gset_country) # make design matrix
+colnames(design) <- levels(fl)
+cont.matrix = makeContrasts(GR-GS, levels = design) # make contrasts matrix
+
+# linear model
+fit <- lmFit(gset_country, design = design)
+fit2 <- contrasts.fit(fit, cont.matrix)
+fit3 <- eBayes(fit2)
+tT <- topTable(fit3, adjust="none", sort.by="none", number=100000) # total = 11005
+
+# subset top table
+tT <- subset(tT, select=c("P.Value","logFC"))
+tT = cbind(tT,rownames(tT))
+colnames(tT)[3] = "Probe_ID"
+
+# Add blast annotations (merge by probe ID to blast results)
+tTable = merge(tT,blast_final, by = 'row.names', all = T)
+tTable$Row.names = NULL
+# there are probes excluded from tT and gset, likely control probes
+
+# ALL GENES
+test1 = tTable
+test2 = test1[!is.na(test1$P.Value),] # remove if no one-to-one matching
+test3 = test2[,c(1,2,5)]
+
+# If multiple genes are in one row, separate
+test4 = matrix(,nrow=0,ncol=3)
+colnames(test4) = colnames(test3)
+for (i in 1:nrow(test3)) {
+  if (is.na(test3$alignment[i])) {
+    next
+  }
+  ans = strsplit(test3[i,3]," ") # length(ans[[1]]) > 1 if model gene has multiple synonyms
+  if (is.na(ans)) {
+    test4 = rbind(test4, test3[i,])
+  }
+  for (j in 1:length(ans[[1]])) { # make each synonym a separate row
+    step1 = cbind(ans[[1]][j],test3[i,1:2])
+    test4 = rbind(test4, step1)
+  }
+}
+dim(test4)
+test5 = unique(test4) # duplicates formed from alt splicing notation
+
+# sort by orf and then p. value
+test3 = test5
+colnames(test3)[1] = 'alignment' 
+sorted = test3[order(test3$alignment,test3$P.Value), ] 
+# remove duplicates (two methods- p value method used)
+final_table = sorted[!duplicated(sorted[,1]), ] # select smallest p value probe for each gene
+
+# mutliple testing correction
+final_table$P.Value = p.adjust(final_table$P.Value, method = "fdr")
+# plot
+hist(final_table$P.Value)
+hist(final_table$logFC)
+dim(final_table[final_table$P.Value<0.05,])
+
+cambodia = final_table
+
+rm(sorted,gset_country,final_table,sml,design,cont.matrix,accession_cambodia,fit,fit2,fit3,tT,fl,sample_names_cambodia,test,test1,test2,test3,tTable)
+
+# VIETNAM
+# load accession_file which has data about samples
+accession_vietnam = filter_accession_file("Vietnam")
+
+sample_names_vietnam = merge(sample_names,accession_vietnam[,c(22,36)], by = "row.names", all = T)
+rownames(sample_names_vietnam) = sample_names_vietnam$Row.names
+sample_names_vietnam = sample_names_vietnam[,2:4]
+
+# convert text resistance status to R/S VIETNAM
+gset_country = change_res(sample_names_vietnam,gset)
+sml = change_res2(sample_names_vietnam,gset)
+
+# ANALYZE EXPRESSION DATA (already log2 transformed)
+fl <- as.factor(sml)
+gset_country$description <- fl
+design <- model.matrix(~ description + 0, gset_country) # make design matrix
+colnames(design) <- levels(fl)
+cont.matrix = makeContrasts(GR-GS, levels = design) # make contrasts matrix
+
+# linear model
+fit <- lmFit(gset_country, design = design)
+fit2 <- contrasts.fit(fit, cont.matrix)
+fit3 <- eBayes(fit2)
+tT <- topTable(fit3, adjust="none", sort.by="none", number=100000) # total = 11005
+
+# subset top table
+tT <- subset(tT, select=c("P.Value","logFC"))
+tT = cbind(tT,rownames(tT))
+colnames(tT)[3] = "Probe_ID"
+
+# Add blast annotations (merge by probe ID to blast results)
+tTable = merge(tT,blast_final, by = 'row.names', all = T)
+tTable$Row.names = NULL
+# there are probes excluded from tT and gset, likely control probes
+
+# ALL GENES
+test1 = tTable
+test2 = test1[!is.na(test1$P.Value),] # remove if no one-to-one matching
+test3 = test2[,c(1,2,5)]
+
+# If multiple genes are in one row, separate
+test4 = matrix(,nrow=0,ncol=3)
+colnames(test4) = colnames(test3)
+for (i in 1:nrow(test3)) {
+  if (is.na(test3$alignment[i])) {
+    next
+  }
+  ans = strsplit(test3[i,3]," ") # length(ans[[1]]) > 1 if model gene has multiple synonyms
+  if (is.na(ans)) {
+    test4 = rbind(test4, test3[i,])
+  }
+  for (j in 1:length(ans[[1]])) { # make each synonym a separate row
+    step1 = cbind(ans[[1]][j],test3[i,1:2])
+    test4 = rbind(test4, step1)
+  }
+}
+dim(test4)
+test5 = unique(test4) # duplicates formed from alt splicing notation
+
+# sort by orf and then p. value
+test3 = test5
+colnames(test3)[1] = 'alignment' 
+sorted = test3[order(test3$alignment,test3$P.Value), ] 
+# remove duplicates (two methods- p value method used)
+final_table = sorted[!duplicated(sorted[,1]), ] # select smallest p value probe for each gene
+
+# mutliple testing correction
+final_table$P.Value = p.adjust(final_table$P.Value, method = "fdr")
+# plot
+hist(final_table$P.Value)
+hist(final_table$logFC)
+dim(final_table[final_table$P.Value<0.05,])
+
+vietnam = final_table 
+rm(sorted,gset_country,final_table,sml,design,cont.matrix,accession_vietnam,fit,fit2,fit3,tT,fl,sample_names_vietnam,test,test1,test2,test3,tTable)
+
+dim(vietnam[vietnam$P.Value<0.05,])
+v = vietnam[order(vietnam$logFC),]
+c = cambodia[order(cambodia$logFC),]
+v = mutate(v,
+           P.Value = ifelse(P.Value<0.05, 0.05, 1))
+c = mutate(c,
+           P.Value = ifelse(P.Value<0.05, 0.05, 1))
+v = v[v$P.Value == 0.05,]
+c = c[c$P.Value == 0.05,]
+
+library(ggplot2)
+ggplot(v) + geom_point(aes(x = alignment, y = logFC, color = P.Value))
+dim(cambodia[cambodia$P.Value<0.05,])
+
+```
+
+VISUALIZATION
+```{r}
+# to generate figures, see enrichment_plots_etc_FINAL.R
+```
+
+
