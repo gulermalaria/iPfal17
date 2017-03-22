@@ -1,0 +1,12 @@
+{\rtf1\ansi\ansicpg1252\cocoartf1404\cocoasubrtf340
+{\fonttbl\f0\fnil\fcharset0 Menlo-Regular;}
+{\colortbl;\red255\green255\blue255;}
+\margl1440\margr1440\vieww10800\viewh8400\viewkind0
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+
+\f0\fs22 \cf0 \CocoaLigature0 \
+makeblastdb -in PlasmoDB-28_Pfalciparum3D7_AnnotatedTranscripts.fasta -parse_seqids -dbtype nucl -input_type fasta\
+\
+blastn -db PlasmoDB-28_Pfalciparum3D7_AnnotatedTranscripts.fasta -query seqs_rev_complement.fa -out blast_output_pf_e0001 -evalue .0001 -task blastn -reward 1 -dust yes -penalty -3 -gapopen 5 -gapextend 2 -outfmt 10\
+\
+blastn -db PlasmoDB-28_Pfalciparum3D7_AnnotatedTranscripts.fasta -query seqs_rev_complement.fa -out blast_output_pf_e0001_standard -evalue .0001 -task blastn -reward 1 -dust yes -penalty -3 -gapopen 5 -gapextend 2}
