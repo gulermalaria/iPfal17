@@ -54,7 +54,7 @@ Note: used dictionary from DEGs_careyBMCG.R
 
 ### figures_careyBMCG.R 
 
-This R script generates Figures 1 and 2 and Suppl. Figures 1, 3 and 4 for Carey et al. BMC Sys Bio. To generate Figure 1, functions and files from DEGs_careyBMCG.R are needed. Figure 2 requires figure2_prep.txt and edits.csv. Suppl. Figure 1 requires cambodia.csv and vietnam.csv. Suppl. Figure 3 requires gene_states_c.csv and gene_states_v.csv. Suppl. Figure 4 requires GeneRxnSubsystems.txt and figure2_prep.txt.
+This R script generates Figures 1 and 2 and Suppl. Figures 1, 3 and 4 for Carey et al. BMC Genomics. To generate Figure 1, functions and files from DEGs_careyBMCG.R are needed. Figure 2 requires figure2_prep.txt and edits.csv. Suppl. Figure 1 requires cambodia.csv and vietnam.csv. Suppl. Figure 3 requires gene_states_c.csv and gene_states_v.csv. Suppl. Figure 4 requires GeneRxnSubsystems.txt and figure2_prep.txt.
 
 ### blast_script_careyBMCG.rtf
 
