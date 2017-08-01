@@ -160,7 +160,7 @@ set_solver('gurobi');
 set_solver_option('MaxTime',60*60); % max time a TIGER simulation is allowed to run
 set_solver_option('IntFeasTol',1e-8); % cutoff number for interpreting a value as 0
 
-pf_tiger = cobra_to_tiger(model); % make cobra model into tiger model
+pf_tiger = cobra_to_tiger(model, 'add_gpr','true','fast_gpr','false','reactions_only','false'); % make cobra model into tiger model
 opt2 = fba(pf_tiger);
 if opt2.val < .1
     warning('fba of tiger model <.1')
