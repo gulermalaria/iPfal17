@@ -1,5 +1,11 @@
+%% DOUBLE CHECK: tiger should have been initialized (and solvers set) at the end of model_curation_careyBMCG. if not:
+% start_tiger
+% set_solver('gurobi');
+% set_solver_option('MaxTime',60*60); % max time a TIGER simulation is allowed to run
+% set_solver_option('IntFeasTol',1e-8); % cutoff number for interpreting a value as 0
 
-pf_cobra = model; % from model_curation_careyBMCSB
+pf_cobra = model; % from model_curation_careyBMCG
+pf_tiger = cobra_to_tiger(pf_cobra, 'add_gpr','true','fast_gpr','false','reactions_only','false'); % make cobra model into tiger model
 
 %% import expression data from individual countries for MADE 
 gene_expression_cambodia = readtable('cambodia.csv','Delimiter',',');
